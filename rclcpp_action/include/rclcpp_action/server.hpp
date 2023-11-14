@@ -39,6 +39,8 @@ namespace rclcpp_action
 {
 // Forward declaration
 class ServerBaseImpl;
+class ServerGoalRequestHandle;
+class ServerCancelRequestHandle;
 
 /// A response returned by an action server callback when a goal is requested.
 enum class GoalResponse : int8_t
@@ -281,6 +283,10 @@ private:
   void
   execute_goal_request_received(std::shared_ptr<void> & data);
 
+  RCLCPP_ACTION_PUBLIC
+  void
+  execute_goal_request_received_continuation();
+
   /// Handle a request to cancel goals on the server
   /// \internal
   RCLCPP_ACTION_PUBLIC
@@ -350,6 +356,15 @@ public:
   using CancelCallback = std::function<CancelResponse(std::shared_ptr<ServerGoalHandle<ActionT>>)>;
   /// Signature of a callback that is used to notify when the goal has been accepted.
   using AcceptedCallback = std::function<void (std::shared_ptr<ServerGoalHandle<ActionT>>)>;
+
+  /// Signature of a callback that asynchronously accepts or rejects goal requests.
+  using GoalAsyncCallback = std::function<void(
+        const GoalUUID &, std::shared_ptr<const typename ActionT::Goal>,
+        std::shared_ptr<ServerGoalRequestHandle>)>;
+  /// Signature of a callback that asynchronously accepts or rejects requests to cancel a goal.
+  using CancelAsyncCallback =
+      std::function<void(std::shared_ptr<ServerGoalHandle<ActionT>>,
+                         std::shared_ptr<ServerCancelRequestHandle>)>;
 
   /// Construct an action server.
   /**
@@ -566,5 +581,70 @@ private:
   std::unordered_map<GoalUUID, GoalHandleWeakPtr> goal_handles_;
   std::mutex goal_handles_mutex_;
 };
+
+/// Handle by which to asynchronously accept or reject goal requests.
+/**
+ * Use this class to either accept or reject a goal request.
+ *
+ * This class is not meant to be created by a user. Instead, it is created by a
+ * `Server` when a goal request is received and is passed to the user-provided
+ * asynchronous goal callback.
+ */
+class ServerGoalRequestHandle
+{
+public:
+  void accept_and_execute()
+  {
+    respond(GoalResponse::ACCEPT_AND_EXECUTE);
+  }
+
+  void accept_and_defer()
+  {
+    respond(GoalResponse::ACCEPT_AND_DEFER);
+  }
+
+  void reject()
+  {
+    respond(GoalResponse::REJECT);
+  }
+
+  virtual ~ServerGoalRequestHandle()
+  {
+    // TODO: If the goal hasn't yet been accepted or rejected, reject the goal.
+    std::lock_guard lock(on_response_mutex_);
+    if (on_response_) {
+      on_response_(GoalResponse::REJECT);
+    }
+  }
+
+protected:
+  ServerGoalRequestHandle(std::function<void(GoalResponse)> on_response)
+  : on_response_(on_response)
+  {
+  }
+
+  void respond(GoalResponse goal_response)
+  {
+    std::lock_guard lock(on_response_mutex_);
+    if (on_response_) {
+      on_response_(goal_response);
+      on_response_ = nullptr;
+    } else {
+      throw std::runtime_error("Attempted to respond more than once to a goal request");
+    }
+  }
+
+  friend class ServerBase;
+
+  std::function<void(GoalResponse)> on_response_;
+  mutable std::mutex on_response_mutex_;
+};
+
+
+
+
+/// TODO
+class ServerCancelRequestHandle;
+
 }  // namespace rclcpp_action
 #endif  // RCLCPP_ACTION__SERVER_HPP_
