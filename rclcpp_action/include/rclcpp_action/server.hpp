@@ -197,8 +197,8 @@ protected:
   /// \internal
   RCLCPP_ACTION_PUBLIC
   virtual
-  std::pair<GoalResponse, std::shared_ptr<void>>
-  call_handle_goal_callback(GoalUUID &, std::shared_ptr<void> request) = 0;
+  void
+  call_handle_goal_callback(GoalUUID &, std::shared_ptr<void> request, std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) = 0;
 
   // ServerBase will determine which goal ids are being cancelled, and then call this function for
   // each goal id.
@@ -366,6 +366,8 @@ public:
       std::function<void(std::shared_ptr<ServerGoalHandle<ActionT>>,
                          std::shared_ptr<ServerCancelRequestHandle>)>;
 
+  static GoalAsyncCallback to_goal_async_callback(GoalCallback sync_cb);
+
   /// Construct an action server.
   /**
    * This constructs an action server, but it will not work until it has been added to a node.
@@ -402,6 +404,28 @@ public:
     CancelCallback handle_cancel,
     AcceptedCallback handle_accepted
   )
+  : Server(
+      node_base,
+      node_clock,
+      node_logging,
+      name,
+      options,
+      to_goal_async_callback(handle_goal),
+      handle_cancel,
+      handle_accepted)
+  {
+  }
+
+  Server(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr node_base,
+    rclcpp::node_interfaces::NodeClockInterface::SharedPtr node_clock,
+    rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr node_logging,
+    const std::string & name,
+    const rcl_action_server_options_t & options,
+    GoalAsyncCallback handle_goal,
+    CancelCallback handle_cancel,
+    AcceptedCallback handle_accepted
+  )
   : ServerBase(
       node_base,
       node_clock,
@@ -422,18 +446,19 @@ protected:
   // API for communication between ServerBase and Server<>
 
   /// \internal
-  std::pair<GoalResponse, std::shared_ptr<void>>
-  call_handle_goal_callback(GoalUUID & uuid, std::shared_ptr<void> message) override
+  void
+  call_handle_goal_callback(GoalUUID & uuid, std::shared_ptr<void> message, std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) override
   {
     auto request = std::static_pointer_cast<
       typename ActionT::Impl::SendGoalService::Request>(message);
     auto goal = std::shared_ptr<typename ActionT::Goal>(request, &request->goal);
-    GoalResponse user_response = handle_goal_(uuid, goal);
+    handle_goal_(uuid, goal, goal_request_handle);
 
-    auto ros_response = std::make_shared<typename ActionT::Impl::SendGoalService::Response>();
-    ros_response->accepted = GoalResponse::ACCEPT_AND_EXECUTE == user_response ||
-      GoalResponse::ACCEPT_AND_DEFER == user_response;
-    return std::make_pair(user_response, ros_response);
+    // GoalResponse user_response = handle_goal_(uuid, goal);
+    // auto ros_response = std::make_shared<typename ActionT::Impl::SendGoalService::Response>();
+    // ros_response->accepted = GoalResponse::ACCEPT_AND_EXECUTE == user_response ||
+    //   GoalResponse::ACCEPT_AND_DEFER == user_response;
+    // return std::make_pair(user_response, ros_response);
   }
 
   /// \internal
@@ -571,7 +596,7 @@ protected:
   // ---------------------------------------------------------
 
 private:
-  GoalCallback handle_goal_;
+  GoalAsyncCallback handle_goal_;
   CancelCallback handle_cancel_;
   AcceptedCallback handle_accepted_;
 
@@ -608,6 +633,17 @@ public:
     respond(GoalResponse::REJECT);
   }
 
+  void respond(GoalResponse goal_response)
+  {
+    std::lock_guard lock(on_response_mutex_);
+    if (on_response_) {
+      on_response_(goal_response);
+      on_response_ = nullptr;
+    } else {
+      throw std::runtime_error("Attempted to respond more than once to a goal request");
+    }
+  }
+
   virtual ~ServerGoalRequestHandle()
   {
     // TODO: If the goal hasn't yet been accepted or rejected, reject the goal.
@@ -623,22 +659,23 @@ protected:
   {
   }
 
-  void respond(GoalResponse goal_response)
-  {
-    std::lock_guard lock(on_response_mutex_);
-    if (on_response_) {
-      on_response_(goal_response);
-      on_response_ = nullptr;
-    } else {
-      throw std::runtime_error("Attempted to respond more than once to a goal request");
-    }
-  }
-
   friend class ServerBase;
 
   std::function<void(GoalResponse)> on_response_;
   mutable std::mutex on_response_mutex_;
 };
+
+
+
+template <typename ActionT>
+auto Server<ActionT>::to_goal_async_callback(GoalCallback sync_cb) -> GoalAsyncCallback {
+  return [sync_cb] (const GoalUUID & uuid, std::shared_ptr<const typename ActionT::Goal> goal,
+      std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) {
+    auto response = sync_cb(uuid, goal);
+    goal_request_handle->respond(response);
+  };
+}
+
 
 
 

@@ -335,51 +335,49 @@ ServerBase::execute_goal_request_received(std::shared_ptr<void> & data)
   convert(uuid, &goal_info);
 
   std::shared_ptr<ServerGoalRequestHandle> goal_request_handle(
-    new ServerGoalRequestHandle([](GoalResponse) {}));
+    new ServerGoalRequestHandle([](GoalResponse) {
+      // TODO
+  }));
 
-  // Call user's callback, getting the user's response and a ros message to send back
-  auto response_pair = call_handle_goal_callback(uuid, message);
-
-  {
-    std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
-    ret = rcl_action_send_goal_response(
-      pimpl_->action_server_.get(),
-      &request_header,
-      response_pair.second.get());
-  }
-
-  if (RCL_RET_OK != ret) {
-    rclcpp::exceptions::throw_from_rcl_error(ret);
-  }
+  // Call user's callback, providing the handle to asynchronously respond.
+  call_handle_goal_callback(uuid, message, goal_request_handle);
 }
 
 void
 ServerBase::execute_goal_request_received_continuation()
 {
-  std::shared_ptr<std::tuple<rcl_ret_t, rcl_action_goal_info_t, rmw_request_id_t, std::shared_ptr<void>>> shared_ptr = nullptr;
-  rcl_ret_t ret = std::get<0>(*shared_ptr);
-  if (RCL_RET_ACTION_SERVER_TAKE_FAILED == ret) {
-    // Ignore take failure because connext fails if it receives a sample without valid data.
-    // This happens when a client shuts down and connext receives a sample saying the client is
-    // no longer alive.
-    return;
-  } else if (RCL_RET_OK != ret) {
-    rclcpp::exceptions::throw_from_rcl_error(ret);
-  }
-  rcl_action_goal_info_t goal_info = std::get<1>(*shared_ptr);
-  rmw_request_id_t request_header = std::get<2>(*shared_ptr);
-  std::shared_ptr<void> message = std::get<3>(*shared_ptr);
+  // Required variables for the continuation.
+  rcl_ret_t ret;
+  rcl_action_goal_info_t goal_info;
+  rmw_request_id_t request_header;
+  std::shared_ptr<void> message;
+  GoalUUID uuid;
+  std::pair<GoalResponse, std::shared_ptr<void>> response_pair;
 
-  bool expected = true;
-  if (!pimpl_->goal_request_ready_.compare_exchange_strong(expected, false)) {
-    return;
-  }
-
-  GoalUUID uuid = get_goal_id_from_goal_request(message.get());
-  convert(uuid, &goal_info);
-
-  // Call user's callback, getting the user's response and a ros message to send back
-  auto response_pair = call_handle_goal_callback(uuid, message);
+  // std::shared_ptr<std::tuple<rcl_ret_t, rcl_action_goal_info_t, rmw_request_id_t, std::shared_ptr<void>>> shared_ptr = nullptr;
+  // rcl_ret_t ret = std::get<0>(*shared_ptr);
+  // if (RCL_RET_ACTION_SERVER_TAKE_FAILED == ret) {
+  //   // Ignore take failure because connext fails if it receives a sample without valid data.
+  //   // This happens when a client shuts down and connext receives a sample saying the client is
+  //   // no longer alive.
+  //   return;
+  // } else if (RCL_RET_OK != ret) {
+  //   rclcpp::exceptions::throw_from_rcl_error(ret);
+  // }
+  // rcl_action_goal_info_t goal_info = std::get<1>(*shared_ptr);
+  // rmw_request_id_t request_header = std::get<2>(*shared_ptr);
+  // std::shared_ptr<void> message = std::get<3>(*shared_ptr);
+  //
+  // bool expected = true;
+  // if (!pimpl_->goal_request_ready_.compare_exchange_strong(expected, false)) {
+  //   return;
+  // }
+  //
+  // GoalUUID uuid = get_goal_id_from_goal_request(message.get());
+  // convert(uuid, &goal_info);
+  //
+  // // Call user's callback, getting the user's response and a ros message to send back
+  // auto response_pair = call_handle_goal_callback(uuid, message);
 
   {
     std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
