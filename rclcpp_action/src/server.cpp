@@ -412,6 +412,7 @@ ServerBase::execute_cancel_request_received(std::shared_ptr<void> & data)
   auto shared_ptr = std::static_pointer_cast
     <std::tuple<rcl_ret_t, std::shared_ptr<action_msgs::srv::CancelGoal::Request>,
       rmw_request_id_t>>(data);
+  data.reset();
   auto ret = std::get<0>(*shared_ptr);
   if (RCL_RET_ACTION_SERVER_TAKE_FAILED == ret) {
     // Ignore take failure because connext fails if it receives a sample without valid data.
@@ -454,46 +455,40 @@ ServerBase::execute_cancel_request_received(std::shared_ptr<void> & data)
     }
   });
 
-  auto response = std::make_shared<action_msgs::srv::CancelGoal::Response>();
+  auto on_status_change = [this]() {
+      publish_status();
+    };
 
-  response->return_code = cancel_response.msg.return_code;
+  auto on_response =
+    [this, request_header](action_msgs::srv::CancelGoal::Response response) mutable {
+      rcl_ret_t ret;
+      {
+        std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
+        ret = rcl_action_send_cancel_response(
+          pimpl_->action_server_.get(), &request_header, &response);
+      }
+
+      if (RCL_RET_OK != ret) {
+        rclcpp::exceptions::throw_from_rcl_error(ret);
+      }
+    };
+
+  auto cancel_request_handle_shared_state = std::make_shared<ServerCancelRequestHandleSharedState>(
+    cancel_response, on_status_change, on_response);
+
   auto & goals = cancel_response.msg.goals_canceling;
   // For each canceled goal, call cancel callback
   for (size_t i = 0; i < goals.size; ++i) {
     const rcl_action_goal_info_t & goal_info = goals.data[i];
     GoalUUID uuid;
     convert(goal_info, &uuid);
+
+    auto cancel_request_handle = std::shared_ptr<ServerCancelRequestHandle>(
+      new ServerCancelRequestHandle(
+        cancel_request_handle_shared_state,
+        uuid));
     auto response_code = call_handle_cancel_callback(uuid);
-    if (CancelResponse::ACCEPT == response_code) {
-      action_msgs::msg::GoalInfo cpp_info;
-      cpp_info.goal_id.uuid = uuid;
-      cpp_info.stamp.sec = goal_info.stamp.sec;
-      cpp_info.stamp.nanosec = goal_info.stamp.nanosec;
-      response->goals_canceling.push_back(cpp_info);
-    }
   }
-
-  // If the user rejects all individual requests to cancel goals,
-  // then we consider the top-level cancel request as rejected.
-  if (goals.size >= 1u && 0u == response->goals_canceling.size()) {
-    response->return_code = action_msgs::srv::CancelGoal::Response::ERROR_REJECTED;
-  }
-
-  if (!response->goals_canceling.empty()) {
-    // at least one goal state changed, publish a new status message
-    publish_status();
-  }
-
-  {
-    std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
-    ret = rcl_action_send_cancel_response(
-      pimpl_->action_server_.get(), &request_header, response.get());
-  }
-
-  if (RCL_RET_OK != ret) {
-    rclcpp::exceptions::throw_from_rcl_error(ret);
-  }
-  data.reset();
 }
 
 void
