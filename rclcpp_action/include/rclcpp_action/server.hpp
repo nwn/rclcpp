@@ -198,7 +198,9 @@ protected:
   RCLCPP_ACTION_PUBLIC
   virtual
   void
-  call_handle_goal_callback(GoalUUID &, std::shared_ptr<void> request, std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) = 0;
+  call_handle_goal_callback(
+    GoalUUID &, std::shared_ptr<void> request,
+    std::shared_ptr<ServerGoalRequestHandle>) = 0;
 
   // ServerBase will call this function when a goal request response is received.
   // The subclass should convert it to the real type and return a type-erased copy.
@@ -362,13 +364,13 @@ public:
   using AcceptedCallback = std::function<void (std::shared_ptr<ServerGoalHandle<ActionT>>)>;
 
   /// Signature of a callback that asynchronously accepts or rejects goal requests.
-  using GoalAsyncCallback = std::function<void(
+  using GoalAsyncCallback = std::function<void (
         const GoalUUID &, std::shared_ptr<const typename ActionT::Goal>,
         std::shared_ptr<ServerGoalRequestHandle>)>;
   /// Signature of a callback that asynchronously accepts or rejects requests to cancel a goal.
   using CancelAsyncCallback =
-      std::function<void(std::shared_ptr<ServerGoalHandle<ActionT>>,
-                         std::shared_ptr<ServerCancelRequestHandle>)>;
+    std::function<void (std::shared_ptr<ServerGoalHandle<ActionT>>,
+      std::shared_ptr<ServerCancelRequestHandle>)>;
 
   static GoalAsyncCallback to_goal_async_callback(GoalCallback sync_cb);
 
@@ -451,7 +453,9 @@ protected:
 
   /// \internal
   void
-  call_handle_goal_callback(GoalUUID & uuid, std::shared_ptr<void> message, std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) override
+  call_handle_goal_callback(
+    GoalUUID & uuid, std::shared_ptr<void> message,
+    std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) override
   {
     auto request = std::static_pointer_cast<
       typename ActionT::Impl::SendGoalService::Request>(message);
@@ -676,17 +680,15 @@ protected:
 
 /// Wrap a synchronous GoalCallback to have the GoalAsyncCallback signature.
 /// \internal
-template <typename ActionT>
-auto Server<ActionT>::to_goal_async_callback(GoalCallback sync_cb) -> GoalAsyncCallback {
-  return [sync_cb] (const GoalUUID & uuid, std::shared_ptr<const typename ActionT::Goal> goal,
-      std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) {
-    auto response = sync_cb(uuid, goal);
-    goal_request_handle->respond(response);
-  };
+template<typename ActionT>
+auto Server<ActionT>::to_goal_async_callback(GoalCallback sync_cb) -> GoalAsyncCallback
+{
+  return [sync_cb](const GoalUUID & uuid, std::shared_ptr<const typename ActionT::Goal> goal,
+           std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) {
+           auto response = sync_cb(uuid, goal);
+           goal_request_handle->respond(response);
+         };
 }
-
-
-
 
 
 /// TODO
