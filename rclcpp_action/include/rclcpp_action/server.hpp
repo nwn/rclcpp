@@ -200,6 +200,14 @@ protected:
   void
   call_handle_goal_callback(GoalUUID &, std::shared_ptr<void> request, std::shared_ptr<ServerGoalRequestHandle> goal_request_handle) = 0;
 
+  // ServerBase will call this function when a goal request response is received.
+  // The subclass should convert it to the real type and return a type-erased copy.
+  /// \internal
+  RCLCPP_ACTION_PUBLIC
+  virtual
+  std::shared_ptr<void>
+  to_goal_request_response(GoalResponse user_response) = 0;
+
   // ServerBase will determine which goal ids are being cancelled, and then call this function for
   // each goal id.
   // The subclass should look up a goal handle and call the user's callback.
@@ -282,10 +290,6 @@ private:
   RCLCPP_ACTION_PUBLIC
   void
   execute_goal_request_received(std::shared_ptr<void> & data);
-
-  RCLCPP_ACTION_PUBLIC
-  void
-  execute_goal_request_received_continuation();
 
   /// Handle a request to cancel goals on the server
   /// \internal
@@ -453,12 +457,16 @@ protected:
       typename ActionT::Impl::SendGoalService::Request>(message);
     auto goal = std::shared_ptr<typename ActionT::Goal>(request, &request->goal);
     handle_goal_(uuid, goal, goal_request_handle);
+  }
 
-    // GoalResponse user_response = handle_goal_(uuid, goal);
-    // auto ros_response = std::make_shared<typename ActionT::Impl::SendGoalService::Response>();
-    // ros_response->accepted = GoalResponse::ACCEPT_AND_EXECUTE == user_response ||
-    //   GoalResponse::ACCEPT_AND_DEFER == user_response;
-    // return std::make_pair(user_response, ros_response);
+  /// \internal
+  std::shared_ptr<void>
+  to_goal_request_response(GoalResponse user_response) override
+  {
+    auto ros_response = std::make_shared<typename ActionT::Impl::SendGoalService::Response>();
+    ros_response->accepted = GoalResponse::ACCEPT_AND_EXECUTE == user_response ||
+      GoalResponse::ACCEPT_AND_DEFER == user_response;
+    return ros_response;
   }
 
   /// \internal

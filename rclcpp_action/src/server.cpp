@@ -334,112 +334,75 @@ ServerBase::execute_goal_request_received(std::shared_ptr<void> & data)
   GoalUUID uuid = get_goal_id_from_goal_request(message.get());
   convert(uuid, &goal_info);
 
-  std::shared_ptr<ServerGoalRequestHandle> goal_request_handle(
-    new ServerGoalRequestHandle([](GoalResponse) {
-      // TODO
-  }));
+  // Create a continuation function and goal request handle to pass to the user's callback.
+  auto goal_request_response_continuation = [this, goal_info, request_header, message, uuid](GoalResponse status) mutable {
+    rcl_ret_t ret;
+    {
+      auto request_response = to_goal_request_response(status);
+      std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
+      ret = rcl_action_send_goal_response(
+          pimpl_->action_server_.get(),
+          &request_header,
+          request_response.get());
+    }
+    if (RCL_RET_OK != ret) {
+      rclcpp::exceptions::throw_from_rcl_error(ret);
+    }
 
-  // Call user's callback, providing the handle to asynchronously respond.
-  call_handle_goal_callback(uuid, message, goal_request_handle);
-}
-
-void
-ServerBase::execute_goal_request_received_continuation()
-{
-  // Required variables for the continuation.
-  rcl_ret_t ret;
-  rcl_action_goal_info_t goal_info;
-  rmw_request_id_t request_header;
-  std::shared_ptr<void> message;
-  GoalUUID uuid;
-  std::pair<GoalResponse, std::shared_ptr<void>> response_pair;
-
-  // std::shared_ptr<std::tuple<rcl_ret_t, rcl_action_goal_info_t, rmw_request_id_t, std::shared_ptr<void>>> shared_ptr = nullptr;
-  // rcl_ret_t ret = std::get<0>(*shared_ptr);
-  // if (RCL_RET_ACTION_SERVER_TAKE_FAILED == ret) {
-  //   // Ignore take failure because connext fails if it receives a sample without valid data.
-  //   // This happens when a client shuts down and connext receives a sample saying the client is
-  //   // no longer alive.
-  //   return;
-  // } else if (RCL_RET_OK != ret) {
-  //   rclcpp::exceptions::throw_from_rcl_error(ret);
-  // }
-  // rcl_action_goal_info_t goal_info = std::get<1>(*shared_ptr);
-  // rmw_request_id_t request_header = std::get<2>(*shared_ptr);
-  // std::shared_ptr<void> message = std::get<3>(*shared_ptr);
-  //
-  // bool expected = true;
-  // if (!pimpl_->goal_request_ready_.compare_exchange_strong(expected, false)) {
-  //   return;
-  // }
-  //
-  // GoalUUID uuid = get_goal_id_from_goal_request(message.get());
-  // convert(uuid, &goal_info);
-  //
-  // // Call user's callback, getting the user's response and a ros message to send back
-  // auto response_pair = call_handle_goal_callback(uuid, message);
-
-  {
-    std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
-    ret = rcl_action_send_goal_response(
-      pimpl_->action_server_.get(),
-      &request_header,
-      response_pair.second.get());
-  }
-
-  if (RCL_RET_OK != ret) {
-    rclcpp::exceptions::throw_from_rcl_error(ret);
-  }
-
-  const auto status = response_pair.first;
-
-  // if goal is accepted, create a goal handle, and store it
-  if (GoalResponse::ACCEPT_AND_EXECUTE == status || GoalResponse::ACCEPT_AND_DEFER == status) {
-    RCLCPP_DEBUG(pimpl_->logger_, "Accepted goal %s", to_string(uuid).c_str());
-    // rcl_action will set time stamp
-    auto deleter = [](rcl_action_goal_handle_t * ptr)
+    // if goal is accepted, create a goal handle, and store it
+    if (GoalResponse::ACCEPT_AND_EXECUTE == status || GoalResponse::ACCEPT_AND_DEFER == status) {
+      RCLCPP_DEBUG(pimpl_->logger_, "Accepted goal %s", to_string(uuid).c_str());
+      // rcl_action will set time stamp
+      auto deleter = [](rcl_action_goal_handle_t * ptr)
       {
         if (nullptr != ptr) {
           rcl_ret_t fail_ret = rcl_action_goal_handle_fini(ptr);
           if (RCL_RET_OK != fail_ret) {
             RCLCPP_DEBUG(
-              rclcpp::get_logger("rclcpp_action"),
-              "failed to fini rcl_action_goal_handle_t in deleter");
+                rclcpp::get_logger("rclcpp_action"),
+                "failed to fini rcl_action_goal_handle_t in deleter");
           }
           delete ptr;
         }
       };
-    rcl_action_goal_handle_t * rcl_handle;
-    {
-      std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
-      rcl_handle = rcl_action_accept_new_goal(pimpl_->action_server_.get(), &goal_info);
-    }
-    if (!rcl_handle) {
-      throw std::runtime_error("Failed to accept new goal\n");
-    }
-
-    std::shared_ptr<rcl_action_goal_handle_t> handle(new rcl_action_goal_handle_t, deleter);
-    // Copy out goal handle since action server storage disappears when it is fini'd
-    *handle = *rcl_handle;
-
-    {
-      std::lock_guard<std::recursive_mutex> lock(pimpl_->unordered_map_mutex_);
-      pimpl_->goal_handles_[uuid] = handle;
-    }
-
-    if (GoalResponse::ACCEPT_AND_EXECUTE == status) {
-      // Change status to executing
-      ret = rcl_action_update_goal_state(handle.get(), GOAL_EVENT_EXECUTE);
-      if (RCL_RET_OK != ret) {
-        rclcpp::exceptions::throw_from_rcl_error(ret);
+      rcl_action_goal_handle_t * rcl_handle;
+      {
+        std::lock_guard<std::recursive_mutex> lock(pimpl_->action_server_reentrant_mutex_);
+        rcl_handle = rcl_action_accept_new_goal(pimpl_->action_server_.get(), &goal_info);
       }
-    }
-    // publish status since a goal's state has changed (was accepted or has begun execution)
-    publish_status();
+      if (!rcl_handle) {
+        throw std::runtime_error("Failed to accept new goal\n");
+      }
 
-    // Tell user to start executing action
-    call_goal_accepted_callback(handle, uuid, message);
-  }
+      std::shared_ptr<rcl_action_goal_handle_t> handle(new rcl_action_goal_handle_t, deleter);
+      // Copy out goal handle since action server storage disappears when it is fini'd
+      *handle = *rcl_handle;
+
+      {
+        std::lock_guard<std::recursive_mutex> lock(pimpl_->unordered_map_mutex_);
+        pimpl_->goal_handles_[uuid] = handle;
+      }
+
+      if (GoalResponse::ACCEPT_AND_EXECUTE == status) {
+        // Change status to executing
+        ret = rcl_action_update_goal_state(handle.get(), GOAL_EVENT_EXECUTE);
+        if (RCL_RET_OK != ret) {
+          rclcpp::exceptions::throw_from_rcl_error(ret);
+        }
+      }
+      // publish status since a goal's state has changed (was accepted or has begun execution)
+      publish_status();
+
+      // Tell user to start executing action
+      call_goal_accepted_callback(handle, uuid, message);
+    }
+  };
+
+  std::shared_ptr<ServerGoalRequestHandle> goal_request_handle(
+      new ServerGoalRequestHandle(goal_request_response_continuation));
+
+  // Call user's callback, providing the handle to asynchronously respond.
+  call_handle_goal_callback(uuid, message, goal_request_handle);
 }
 
 void
