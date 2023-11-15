@@ -654,7 +654,6 @@ public:
 
   virtual ~ServerGoalRequestHandle()
   {
-    // TODO: If the goal hasn't yet been accepted or rejected, reject the goal.
     std::lock_guard lock(on_response_mutex_);
     if (on_response_) {
       on_response_(GoalResponse::REJECT);
@@ -667,14 +666,16 @@ protected:
   {
   }
 
+  // Allow only ServerBase to construct this type.
   friend class ServerBase;
 
+  // All accesses to the on_response_ callback must be protected by the on_response_mutex_.
   std::function<void(GoalResponse)> on_response_;
   mutable std::mutex on_response_mutex_;
 };
 
-
-
+/// Wrap a synchronous GoalCallback to have the GoalAsyncCallback signature.
+/// \internal
 template <typename ActionT>
 auto Server<ActionT>::to_goal_async_callback(GoalCallback sync_cb) -> GoalAsyncCallback {
   return [sync_cb] (const GoalUUID & uuid, std::shared_ptr<const typename ActionT::Goal> goal,
