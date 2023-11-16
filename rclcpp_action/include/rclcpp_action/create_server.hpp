@@ -53,7 +53,7 @@ namespace rclcpp_action
  * \param[in] group The action server will be added to this callback group.
  *   If `nullptr`, then the action server is added to the default callback group.
  */
-template<typename ActionT, typename GoalCallback>
+template<typename ActionT, typename GoalCallback, typename CancelCallback>
 typename Server<ActionT>::SharedPtr
 create_server(
   rclcpp::node_interfaces::NodeBaseInterface::SharedPtr node_base_interface,
@@ -62,7 +62,7 @@ create_server(
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr node_waitables_interface,
   const std::string & name,
   GoalCallback handle_goal,
-  typename Server<ActionT>::CancelCallback handle_cancel,
+  CancelCallback handle_cancel,
   typename Server<ActionT>::AcceptedCallback handle_accepted,
   const rcl_action_server_options_t & options = rcl_action_server_get_default_options(),
   rclcpp::CallbackGroup::SharedPtr group = nullptr)
@@ -127,13 +127,13 @@ create_server(
  * \param[in] group The action server will be added to this callback group.
  *   If `nullptr`, then the action server is added to the default callback group.
  */
-template<typename ActionT, typename NodeT, typename GoalCallback>
+template<typename ActionT, typename NodeT, typename GoalCallback, typename CancelCallback>
 typename Server<ActionT>::SharedPtr
 create_server(
   NodeT node,
   const std::string & name,
   GoalCallback handle_goal,
-  typename Server<ActionT>::CancelCallback handle_cancel,
+  CancelCallback handle_cancel,
   typename Server<ActionT>::AcceptedCallback handle_accepted,
   const rcl_action_server_options_t & options = rcl_action_server_get_default_options(),
   rclcpp::CallbackGroup::SharedPtr group = nullptr)
