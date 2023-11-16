@@ -476,9 +476,6 @@ ServerBase::execute_cancel_request_received(std::shared_ptr<void> & data)
   auto cancel_request_handle_shared_state = std::make_shared<ServerCancelRequestHandleSharedState>(
     cancel_response, on_status_change, on_response);
 
-  // In case there were no goals to be cancelled, we need to still trigger a response.
-  cancel_request_handle_shared_state->try_responding();
-
   auto & goals = cancel_response.msg.goals_canceling;
   // For each canceled goal, call cancel callback
   for (size_t i = 0; i < goals.size; ++i) {

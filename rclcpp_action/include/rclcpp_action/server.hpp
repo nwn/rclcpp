@@ -715,28 +715,13 @@ public:
     no_goals_ = outstanding_goals_.empty();
   }
 
-  void try_responding()
+  ~ServerCancelRequestHandleSharedState()
   {
-    std::lock_guard lock(mutex_);
-
-    if (!outstanding_goals_.empty() || !on_response_) {
-      // Can't respond until all individual goals have given a response.
-      return;
+    if (no_goals_) {
+      // If there were no goals, the user cannot have triggered a response. So
+      // we respond manually here instead.
+      try_responding();
     }
-
-    // If the user rejects all individual requests to cancel goals,
-    // then we consider the top-level cancel request as rejected.
-    if (!no_goals_ && response_.goals_canceling.empty()) {
-      response_.return_code = action_msgs::srv::CancelGoal::Response::ERROR_REJECTED;
-    }
-
-    if (!response_.goals_canceling.empty()) {
-      // At least one goal state changed, publish a new status message
-      on_state_change_();
-    }
-
-    on_response_(std::move(response_));
-    on_response_ = nullptr;
   }
 
   void respond(GoalUUID goal_uuid, CancelResponse response)
@@ -760,6 +745,31 @@ public:
   }
 
 private:
+  void try_responding()
+  {
+    std::lock_guard lock(mutex_);
+
+    if (!outstanding_goals_.empty() || !on_response_) {
+      // Can't respond until all individual goals have given a response.
+      return;
+    }
+
+    // If the user rejects all individual requests to cancel goals,
+    // then we consider the top-level cancel request as rejected.
+    if (!no_goals_ && response_.goals_canceling.empty()) {
+      response_.return_code = action_msgs::srv::CancelGoal::Response::ERROR_REJECTED;
+    }
+
+    if (!response_.goals_canceling.empty()) {
+      // At least one goal state changed, publish a new status message
+      on_state_change_();
+    }
+
+    // We only respond once, so we can move out of our response_.
+    on_response_(std::move(response_));
+    on_response_ = nullptr;
+  }
+
   // All accesses to outstanding_goals_ and response_ must be protected by mutex_.
   std::mutex mutex_;
   std::unordered_map<GoalUUID, rcl_action_goal_info_t> outstanding_goals_;
@@ -809,7 +819,6 @@ private:
     GoalUUID goal_uuid)
   : shared_state_(shared_state), goal_uuid_(goal_uuid)
   {
-    // TODO
   }
 
   // Allow only ServerBase to construct this type.
