@@ -41,6 +41,8 @@ namespace rclcpp_action
 class ServerBaseImpl;
 class ServerGoalRequestHandle;
 class ServerCancelRequestHandle;
+class ServerCancelRequestHandleSharedState;
+
 
 /// A response returned by an action server callback when a goal is requested.
 enum class GoalResponse : int8_t
@@ -216,8 +218,11 @@ protected:
   /// \internal
   RCLCPP_ACTION_PUBLIC
   virtual
-  CancelResponse
-  call_handle_cancel_callback(const GoalUUID & uuid) = 0;
+  void
+  call_handle_cancel_callback(
+    const GoalUUID & uuid,
+    std::shared_ptr<ServerCancelRequestHandleSharedState> cancel_request_handle_shared_state)
+  = 0;
 
   /// Given a goal request message, return the UUID contained within.
   /// \internal
@@ -373,6 +378,7 @@ public:
       std::shared_ptr<ServerCancelRequestHandle>)>;
 
   static GoalAsyncCallback to_goal_async_callback(GoalCallback sync_cb);
+  static CancelAsyncCallback to_cancel_async_callback(CancelCallback sync_cb);
 
   /// Construct an action server.
   /**
@@ -417,7 +423,7 @@ public:
       name,
       options,
       to_goal_async_callback(handle_goal),
-      handle_cancel,
+      to_cancel_async_callback(handle_cancel),
       handle_accepted)
   {
   }
@@ -430,6 +436,50 @@ public:
     const rcl_action_server_options_t & options,
     GoalAsyncCallback handle_goal,
     CancelCallback handle_cancel,
+    AcceptedCallback handle_accepted
+  )
+  : Server(
+      node_base,
+      node_clock,
+      node_logging,
+      name,
+      options,
+      handle_goal,
+      to_cancel_async_callback(handle_cancel),
+      handle_accepted)
+  {
+  }
+
+  Server(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr node_base,
+    rclcpp::node_interfaces::NodeClockInterface::SharedPtr node_clock,
+    rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr node_logging,
+    const std::string & name,
+    const rcl_action_server_options_t & options,
+    GoalCallback handle_goal,
+    CancelAsyncCallback handle_cancel,
+    AcceptedCallback handle_accepted
+  )
+  : Server(
+      node_base,
+      node_clock,
+      node_logging,
+      name,
+      options,
+      to_goal_async_callback(handle_goal),
+      handle_cancel,
+      handle_accepted)
+  {
+  }
+
+  Server(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr node_base,
+    rclcpp::node_interfaces::NodeClockInterface::SharedPtr node_clock,
+    rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr node_logging,
+    const std::string & name,
+    const rcl_action_server_options_t & options,
+    GoalAsyncCallback handle_goal,
+    CancelAsyncCallback handle_cancel,
     AcceptedCallback handle_accepted
   )
   : ServerBase(
@@ -474,8 +524,11 @@ protected:
   }
 
   /// \internal
-  CancelResponse
-  call_handle_cancel_callback(const GoalUUID & uuid) override
+  void
+  call_handle_cancel_callback(
+    const GoalUUID & uuid,
+    std::shared_ptr<ServerCancelRequestHandleSharedState> cancel_request_handle_shared_state)
+  override
   {
     std::shared_ptr<ServerGoalHandle<ActionT>> goal_handle;
     {
@@ -486,21 +539,26 @@ protected:
       }
     }
 
-    CancelResponse resp = CancelResponse::REJECT;
     if (goal_handle) {
-      resp = handle_cancel_(goal_handle);
-      if (CancelResponse::ACCEPT == resp) {
-        try {
-          goal_handle->_cancel_goal();
-        } catch (const rclcpp::exceptions::RCLError & ex) {
-          RCLCPP_DEBUG(
-            rclcpp::get_logger("rclcpp_action"),
-            "Failed to cancel goal in call_handle_cancel_callback: %s", ex.what());
+      auto on_accept = [weak_goal_handle = std::weak_ptr(goal_handle)]() {
+          if (auto goal_handle = weak_goal_handle.lock()) {
+            try {
+              goal_handle->_cancel_goal();
+              return CancelResponse::ACCEPT;
+            } catch (const rclcpp::exceptions::RCLError & ex) {
+              RCLCPP_DEBUG(
+                rclcpp::get_logger("rclcpp_action"),
+                "Failed to cancel goal in ServerCancelRequestHandle::on_accept_: %s", ex.what());
+            }
+          }
           return CancelResponse::REJECT;
-        }
-      }
+        };
+      auto cancel_request_handle = std::shared_ptr<ServerCancelRequestHandle>(
+        new ServerCancelRequestHandle(
+          cancel_request_handle_shared_state,
+          uuid, on_accept));
+      handle_cancel_(goal_handle, cancel_request_handle);
     }
-    return resp;
   }
 
   /// \internal
@@ -609,7 +667,7 @@ protected:
 
 private:
   GoalAsyncCallback handle_goal_;
-  CancelCallback handle_cancel_;
+  CancelAsyncCallback handle_cancel_;
   AcceptedCallback handle_accepted_;
 
   using GoalHandleWeakPtr = std::weak_ptr<ServerGoalHandle<ActionT>>;
@@ -663,8 +721,6 @@ auto Server<ActionT>::to_goal_async_callback(GoalCallback sync_cb) -> GoalAsyncC
          };
 }
 
-class ServerCancelRequestHandleSharedState;
-
 /// Handle by which to asynchronously accept or reject cancel requests.
 /**
  * Use this class to either accept or reject a cancel request.
@@ -687,17 +743,31 @@ public:
 private:
   ServerCancelRequestHandle(
     std::shared_ptr<ServerCancelRequestHandleSharedState> shared_state,
-    GoalUUID goal_uuid);
+    GoalUUID goal_uuid, std::function<CancelResponse()> on_accept);
 
-  // Allow only ServerBase to construct this type.
-  friend class ServerBase;
+  // Allow only Server to construct this type.
+  template<typename ActionT>
+  friend class Server;
 
   // All accesses to the shared_state_ must be protected by shared_state_mutex_.
   std::shared_ptr<ServerCancelRequestHandleSharedState> shared_state_;
   std::mutex shared_state_mutex_;
 
   GoalUUID goal_uuid_;
+  std::function<CancelResponse()> on_accept_;
 };
+
+/// Wrap a synchronous CancelCallback to have the CancelAsyncCallback signature.
+/// \internal
+template<typename ActionT>
+auto Server<ActionT>::to_cancel_async_callback(CancelCallback sync_cb) -> CancelAsyncCallback
+{
+  return [sync_cb](std::shared_ptr<ServerGoalHandle<ActionT>> goal_handle,
+           std::shared_ptr<ServerCancelRequestHandle> cancel_request_handle) {
+           auto response = sync_cb(goal_handle);
+           cancel_request_handle->respond(response);
+         };
+}
 
 }  // namespace rclcpp_action
 #endif  // RCLCPP_ACTION__SERVER_HPP_

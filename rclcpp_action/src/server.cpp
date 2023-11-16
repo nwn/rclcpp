@@ -483,11 +483,7 @@ ServerBase::execute_cancel_request_received(std::shared_ptr<void> & data)
     GoalUUID uuid;
     convert(goal_info, &uuid);
 
-    auto cancel_request_handle = std::shared_ptr<ServerCancelRequestHandle>(
-      new ServerCancelRequestHandle(
-        cancel_request_handle_shared_state,
-        uuid));
-    auto response_code = call_handle_cancel_callback(uuid);
+    call_handle_cancel_callback(uuid, cancel_request_handle_shared_state);
   }
 }
 
@@ -977,6 +973,10 @@ void ServerCancelRequestHandle::respond(CancelResponse response)
 {
   std::lock_guard lock(shared_state_mutex_);
   if (shared_state_) {
+    if (response == CancelResponse::ACCEPT) {
+      response = on_accept_();
+    }
+
     shared_state_->respond(goal_uuid_, response);
     shared_state_.reset();
   } else {
@@ -994,8 +994,8 @@ ServerCancelRequestHandle::~ServerCancelRequestHandle()
 
 ServerCancelRequestHandle::ServerCancelRequestHandle(
   std::shared_ptr<ServerCancelRequestHandleSharedState> shared_state,
-  GoalUUID goal_uuid)
-: shared_state_(shared_state), goal_uuid_(goal_uuid)
+  GoalUUID goal_uuid, std::function<CancelResponse()> on_accept)
+: shared_state_(shared_state), goal_uuid_(goal_uuid), on_accept_(on_accept)
 {
 }
 } // namespace rclcpp
