@@ -719,7 +719,7 @@ public:
   {
     std::lock_guard lock(mutex_);
 
-    if (!outstanding_goals_.empty()) {
+    if (!outstanding_goals_.empty() || !on_response_) {
       // Can't respond until all individual goals have given a response.
       return;
     }
@@ -736,6 +736,7 @@ public:
     }
 
     on_response_(std::move(response_));
+    on_response_ = nullptr;
   }
 
   void respond(GoalUUID goal_uuid, CancelResponse response)
