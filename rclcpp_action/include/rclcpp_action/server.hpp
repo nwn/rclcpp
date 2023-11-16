@@ -22,8 +22,6 @@
 #include <unordered_map>
 #include <utility>
 
-#include "action_msgs/msg/goal_status_array.hpp"
-#include "action_msgs/srv/cancel_goal.hpp"
 #include "rcl/event_callback.h"
 #include "rcl_action/action_server.h"
 #include "rosidl_runtime_c/action_type_support_struct.h"
@@ -692,134 +690,31 @@ auto Server<ActionT>::to_goal_async_callback(GoalCallback sync_cb) -> GoalAsyncC
          };
 }
 
+class ServerCancelRequestHandleSharedState;
 
-/// TODO
-class ServerCancelRequestHandleSharedState
-{
-public:
-  ServerCancelRequestHandleSharedState(
-    rcl_action_cancel_response_t rcl_cancel_response,
-    std::function<void()> on_state_change,
-    std::function<void(action_msgs::srv::CancelGoal::Response)> on_response)
-  : on_state_change_(on_state_change),
-    on_response_(on_response)
-  {
-    response_.return_code = rcl_cancel_response.msg.return_code;
-    auto & goals = rcl_cancel_response.msg.goals_canceling;
-    for (size_t i = 0; i < goals.size; ++i) {
-      const rcl_action_goal_info_t & goal_info = goals.data[i];
-      GoalUUID uuid;
-      convert(goal_info, &uuid);
-      outstanding_goals_.emplace(uuid, goal_info);
-    }
-    no_goals_ = outstanding_goals_.empty();
-  }
-
-  ~ServerCancelRequestHandleSharedState()
-  {
-    if (no_goals_) {
-      // If there were no goals, the user cannot have triggered a response. So
-      // we respond manually here instead.
-      try_responding();
-    }
-  }
-
-  void respond(GoalUUID goal_uuid, CancelResponse response)
-  {
-    {
-      std::lock_guard lock(mutex_);
-      auto goal = outstanding_goals_.find(goal_uuid);
-      if (goal != outstanding_goals_.end()) {
-        if (response == CancelResponse::ACCEPT) {
-          action_msgs::msg::GoalInfo goal_info;
-          goal_info.goal_id.uuid = goal_uuid;
-          goal_info.stamp.sec = goal->second.stamp.sec;
-          goal_info.stamp.nanosec = goal->second.stamp.nanosec;
-          response_.goals_canceling.push_back(goal_info);
-        }
-
-        outstanding_goals_.erase(goal);
-      }
-    }
-    try_responding();
-  }
-
-private:
-  void try_responding()
-  {
-    std::lock_guard lock(mutex_);
-
-    if (!outstanding_goals_.empty() || !on_response_) {
-      // Can't respond until all individual goals have given a response.
-      return;
-    }
-
-    // If the user rejects all individual requests to cancel goals,
-    // then we consider the top-level cancel request as rejected.
-    if (!no_goals_ && response_.goals_canceling.empty()) {
-      response_.return_code = action_msgs::srv::CancelGoal::Response::ERROR_REJECTED;
-    }
-
-    if (!response_.goals_canceling.empty()) {
-      // At least one goal state changed, publish a new status message
-      on_state_change_();
-    }
-
-    // We only respond once, so we can move out of our response_.
-    on_response_(std::move(response_));
-    on_response_ = nullptr;
-  }
-
-  // All accesses to outstanding_goals_ and response_ must be protected by mutex_.
-  std::mutex mutex_;
-  std::unordered_map<GoalUUID, rcl_action_goal_info_t> outstanding_goals_;
-  action_msgs::srv::CancelGoal::Response response_;
-  bool no_goals_;
-
-  std::function<void()> on_state_change_;
-  std::function<void(action_msgs::srv::CancelGoal::Response)> on_response_;
-};
-
-/// TODO
+/// Handle by which to asynchronously accept or reject cancel requests.
+/**
+ * Use this class to either accept or reject a cancel request.
+ *
+ * This class is not meant to be created by a user. Instead, it is created by a
+ * `Server` when a cancel request is received and is passed to the user-provided
+ * asynchronous cancel callback.
+ */
 class ServerCancelRequestHandle
 {
 public:
-  void accept()
-  {
-    respond(CancelResponse::ACCEPT);
-  }
+  void accept();
 
-  void reject()
-  {
-    respond(CancelResponse::REJECT);
-  }
+  void reject();
 
-  void respond(CancelResponse response)
-  {
-    std::lock_guard lock(shared_state_mutex_);
-    if (shared_state_) {
-      shared_state_->respond(goal_uuid_, response);
-      shared_state_.reset();
-    } else {
-      throw std::runtime_error("Attempted to respond more than once to a cancel request");
-    }
-  }
+  void respond(CancelResponse response);
 
-  ~ServerCancelRequestHandle()
-  {
-    std::lock_guard lock(shared_state_mutex_);
-    if (shared_state_) {
-      shared_state_->respond(goal_uuid_, CancelResponse::REJECT);
-    }
-  }
+  ~ServerCancelRequestHandle();
 
 private:
   ServerCancelRequestHandle(
     std::shared_ptr<ServerCancelRequestHandleSharedState> shared_state,
-    GoalUUID goal_uuid)
-  : shared_state_(shared_state), goal_uuid_(goal_uuid)
-  {
-  }
+    GoalUUID goal_uuid);
 
   // Allow only ServerBase to construct this type.
   friend class ServerBase;
