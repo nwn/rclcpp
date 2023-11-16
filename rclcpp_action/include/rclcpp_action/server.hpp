@@ -630,45 +630,18 @@ private:
 class ServerGoalRequestHandle
 {
 public:
-  void accept_and_execute()
-  {
-    respond(GoalResponse::ACCEPT_AND_EXECUTE);
-  }
+  void accept_and_execute();
 
-  void accept_and_defer()
-  {
-    respond(GoalResponse::ACCEPT_AND_DEFER);
-  }
+  void accept_and_defer();
 
-  void reject()
-  {
-    respond(GoalResponse::REJECT);
-  }
+  void reject();
 
-  void respond(GoalResponse goal_response)
-  {
-    std::lock_guard lock(on_response_mutex_);
-    if (on_response_) {
-      on_response_(goal_response);
-      on_response_ = nullptr;
-    } else {
-      throw std::runtime_error("Attempted to respond more than once to a goal request");
-    }
-  }
+  void respond(GoalResponse goal_response);
 
-  virtual ~ServerGoalRequestHandle()
-  {
-    std::lock_guard lock(on_response_mutex_);
-    if (on_response_) {
-      on_response_(GoalResponse::REJECT);
-    }
-  }
+  ~ServerGoalRequestHandle();
 
 private:
-  ServerGoalRequestHandle(std::function<void(GoalResponse)> on_response)
-  : on_response_(on_response)
-  {
-  }
+  ServerGoalRequestHandle(std::function<void(GoalResponse)> on_response);
 
   // Allow only ServerBase to construct this type.
   friend class ServerBase;
