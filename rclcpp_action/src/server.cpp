@@ -876,7 +876,7 @@ ServerGoalRequestHandle::ServerGoalRequestHandle(std::function<void(GoalResponse
 class ServerCancelRequestHandleSharedState
 {
 public:
-  ServerCancelRequestHandleSharedState(
+  explicit ServerCancelRequestHandleSharedState(
     rcl_action_cancel_response_t rcl_cancel_response,
     std::function<void()> on_state_change,
     std::function<void(action_msgs::srv::CancelGoal::Response)> on_response)
@@ -998,4 +998,4 @@ ServerCancelRequestHandle::ServerCancelRequestHandle(
 : shared_state_(shared_state), goal_uuid_(goal_uuid), on_accept_(on_accept)
 {
 }
-} // namespace rclcpp
+}  // namespace rclcpp_action

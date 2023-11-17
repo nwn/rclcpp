@@ -699,7 +699,7 @@ public:
   ~ServerGoalRequestHandle();
 
 private:
-  ServerGoalRequestHandle(std::function<void(GoalResponse)> on_response);
+  explicit ServerGoalRequestHandle(std::function<void(GoalResponse)> on_response);
 
   // Allow only ServerBase to construct this type.
   friend class ServerBase;
@@ -741,7 +741,7 @@ public:
   ~ServerCancelRequestHandle();
 
 private:
-  ServerCancelRequestHandle(
+  explicit ServerCancelRequestHandle(
     std::shared_ptr<ServerCancelRequestHandleSharedState> shared_state,
     GoalUUID goal_uuid, std::function<CancelResponse()> on_accept);
 

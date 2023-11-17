@@ -31,6 +31,29 @@
 
 namespace rclcpp_action
 {
+
+namespace detail
+{
+template<typename Callable, typename Signature>
+struct is_invocable_with_signature;
+
+template<typename Callable, typename Ret, typename ... Args>
+struct is_invocable_with_signature<Callable, std::function<Ret(Args...)>>
+{
+  static constexpr bool value = std::is_invocable_r_v<Ret, Callable, Args...>;
+};
+
+template<typename ActionT, typename Callback>
+constexpr bool is_goal_async_callback_v =
+  is_invocable_with_signature<Callback, typename Server<ActionT>::GoalAsyncCallback>::value &&
+  !is_invocable_with_signature<Callback, typename Server<ActionT>::GoalCallback>::value;
+
+template<typename ActionT, typename Callback>
+constexpr bool is_cancel_async_callback_v =
+  is_invocable_with_signature<Callback, typename Server<ActionT>::CancelAsyncCallback>::value &&
+  !is_invocable_with_signature<Callback, typename Server<ActionT>::CancelCallback>::value;
+}  // namespace detail
+
 /// Create an action server.
 /**
  * All provided callback functions must be non-blocking.
@@ -96,14 +119,22 @@ create_server(
       delete ptr;
     };
 
+  using GoalCallbackType = std::conditional_t<detail::is_goal_async_callback_v<ActionT,
+      GoalCallback>,
+      typename Server<ActionT>::GoalAsyncCallback, typename Server<ActionT>::GoalCallback>;
+
+  using CancelCallbackType = std::conditional_t<detail::is_cancel_async_callback_v<ActionT,
+      CancelCallback>,
+      typename Server<ActionT>::CancelAsyncCallback, typename Server<ActionT>::CancelCallback>;
+
   std::shared_ptr<Server<ActionT>> action_server(new Server<ActionT>(
       node_base_interface,
       node_clock_interface,
       node_logging_interface,
       name,
       options,
-      handle_goal,
-      handle_cancel,
+      static_cast<GoalCallbackType>(handle_goal),
+      static_cast<CancelCallbackType>(handle_cancel),
       handle_accepted), deleter);
 
   node_waitables_interface->add_waitable(action_server, group);
