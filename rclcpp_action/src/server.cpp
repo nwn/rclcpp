@@ -853,8 +853,9 @@ void ServerGoalRequestHandle::respond(GoalResponse goal_response)
 {
   std::lock_guard lock(on_response_mutex_);
   if (on_response_) {
-    on_response_(goal_response);
+    auto on_response = on_response_;
     on_response_ = nullptr;
+    on_response(goal_response);
   } else {
     throw std::runtime_error("Attempted to respond more than once to a goal request");
   }
@@ -945,8 +946,9 @@ private:
     }
 
     // We only respond once, so we can move out of our response_.
-    on_response_(std::move(response_));
+    auto on_response = on_response_;
     on_response_ = nullptr;
+    on_response(std::move(response_));
   }
 
   // All accesses to outstanding_goals_ and response_ must be protected by mutex_.
@@ -977,8 +979,9 @@ void ServerCancelRequestHandle::respond(CancelResponse response)
       response = on_accept_();
     }
 
-    shared_state_->respond(goal_uuid_, response);
+    auto shared_state = shared_state_;
     shared_state_.reset();
+    shared_state->respond(goal_uuid_, response);
   } else {
     throw std::runtime_error("Attempted to respond more than once to a cancel request");
   }
